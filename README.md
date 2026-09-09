@@ -162,3 +162,14 @@ Energy cost comparison
 Estimated savings
 Monthly and annual energy balance
 Version 0.3 therefore provides a more realistic representation of how renewable electricity interacts with electricity demand over time.
+
+## Documentation
+
+Detailed documentation for the tool is available below:
+
+- [Calculation Formulas](docs/formulas.md)
+- [Analytical Methodology](docs/methodology.md)
+- [Model Assumptions](docs/assumptions.md)
+- [User Guide](docs/user_guide.md)
+
+

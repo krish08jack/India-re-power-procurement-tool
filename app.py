@@ -4,6 +4,12 @@ import pandas as pd
 import numpy as np
 import numpy_financial as npf
 
+from pathlib import Path
+
+css_file = Path("assets/style.css")
+
+with open(css_file) as f:
+    st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
 # ============================================================
 # PAGE CONFIGURATION

@@ -3,6 +3,7 @@
 An open-source decision-support tool for analysing renewable energy procurement options in India.
 a
 The tool brings together renewable energy cost analysis, open-access comparison, long-term PPA economics, and monthly energy matching with banking into a single Streamlit application.
+
 https://india-re-power-procurement-tool-v1.streamlit.app/
 ---
 

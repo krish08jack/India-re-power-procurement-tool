@@ -3,14 +3,35 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import numpy_financial as npf
-
 from pathlib import Path
+from src.regulatory_engine import RegulatoryEngine
 
-css_file = Path("assets/style.css")
+# ============================================================
+# REGULATORY DATABASE
+# ============================================================
 
-with open(css_file) as f:
-    st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+BASE_DIR = Path(__file__).resolve().parent
 
+REGULATORY_DB = (
+    BASE_DIR
+    / "data"
+    / "processed"
+    / "regulatory"
+    / "rajasthan_regulatory_parameters.csv"
+)
+
+TARIFF_DB = (
+    BASE_DIR
+    / "data"
+    / "processed"
+    / "regulatory"
+    / "rajasthan_tariff_parameters.csv"
+)
+
+regulatory_engine = RegulatoryEngine(
+    REGULATORY_DB,
+    TARIFF_DB
+)
 # ============================================================
 # PAGE CONFIGURATION
 # ============================================================
@@ -1619,6 +1640,1354 @@ def version_03():
         "will be incorporated in Version 0.4."
     )
 
+# ============================================================
+# VERSION 0.4
+# RAJASTHAN REGULATORY + TARIFF ENGINE
+# ============================================================
+
+def _regulatory_value(parameter_id, state="Rajasthan", **kwargs):
+    """
+    Retrieve a regulatory parameter from the regulatory engine.
+
+    The regulatory engine returns a DataFrame, so this helper
+    extracts the applicable value for display.
+    """
+    try:
+        result = regulatory_engine.get_parameter(
+            state=state,
+            parameter_id=parameter_id,
+            **{
+                k: v for k, v in kwargs.items()
+                if v is not None
+            }
+        )
+
+        if result is None or result.empty:
+            return None
+
+        # Return the first applicable value.
+        return result.iloc[0]["Value"]
+
+    except Exception as e:
+        return None
+
+
+def _tariff_lookup(
+    parameter,
+    state="Rajasthan",
+    voltage_level=None,
+    effective_date="2026-04-01"
+):
+    """
+    Retrieve a tariff value from the tariff engine.
+
+    get_single_tariff_value() returns a dictionary:
+    {
+        found: bool,
+        value: ...,
+        unit: ...,
+        record: ...,
+        message: ...
+    }
+    """
+    try:
+        result = regulatory_engine.get_single_tariff_value(
+            state=state,
+            parameter=parameter,
+            voltage_level=voltage_level,
+            effective_date=effective_date
+        )
+
+        if not isinstance(result, dict):
+            return {
+                "found": False,
+                "value": None,
+                "unit": None,
+                "record": None,
+                "message": "Unexpected tariff engine response."
+            }
+
+        return result
+
+    except Exception as e:
+        return {
+            "found": False,
+            "value": None,
+            "unit": None,
+            "record": None,
+            "message": str(e)
+        }
+
+
+def _tariff_value(result):
+    """Extract numerical value from tariff lookup result."""
+    if isinstance(result, dict) and result.get("found"):
+        return result.get("value")
+    return None
+
+
+def _tariff_source_text(result):
+    """Create a readable source/traceability string."""
+    if not isinstance(result, dict):
+        return "Source metadata not available"
+
+    record = result.get("record")
+
+    if not isinstance(record, dict):
+        return "Source metadata not available"
+
+    parts = []
+
+    if record.get("Document"):
+        parts.append(f"Document: {record['Document']}")
+
+    if record.get("Clause"):
+        parts.append(f"Clause: {record['Clause']}")
+
+    if pd.notna(record.get("Page")):
+        parts.append(f"Page: {int(record['Page'])}")
+
+    if record.get("Status"):
+        parts.append(f"Status: {record['Status']}")
+
+    if record.get("Notes"):
+        parts.append(f"Notes: {record['Notes']}")
+
+    return " | ".join(parts) if parts else "Source metadata not available"
+
+
+def _display_value(value, unit=""):
+    """Format a regulatory/tariff value for display."""
+    if value is None:
+        return "Not available"
+
+    if isinstance(value, float) and np.isnan(value):
+        return "Not available"
+
+    if isinstance(value, (int, float, np.integer, np.floating)):
+        if unit == "%":
+            return f"{float(value):.2f}%"
+
+        if unit:
+            return f"{float(value):.2f} {unit}"
+
+        return f"{float(value):.2f}"
+
+    return str(value)
+
+
+def version_04():
+
+    st.title("📘 Version 0.4 — Rajasthan Regulatory + Tariff Engine")
+
+    st.markdown(
+        """
+        Evaluate renewable electricity procurement under Rajasthan's
+        Green Energy Open Access framework using the project's
+        regulatory and tariff databases.
+        """
+    )
+
+    st.info(
+        "Version 0.4 uses the Rajasthan regulatory and tariff databases. "
+        "Where a numerical tariff is not available, the model does not assume zero."
+    )
+
+    st.divider()
+
+    # --------------------------------------------------------
+    # INPUTS
+    # --------------------------------------------------------
+
+    st.sidebar.header("📍 Regulatory Context")
+
+    state = st.sidebar.selectbox(
+        "State",
+        ["Rajasthan"],
+        key="v04_state"
+    )
+
+    consumer_type = st.sidebar.selectbox(
+        "Consumer Type",
+        ["Non-Captive", "Captive"],
+        key="v04_consumer_type"
+    )
+
+    voltage_level = st.sidebar.selectbox(
+        "Voltage Level",
+        ["11 kV", "33 kV", "132 kV+", "LT"],
+        index=0,
+        key="v04_voltage"
+    )
+
+    st.sidebar.header("☀️ Renewable Project")
+
+    capacity_mw = st.sidebar.number_input(
+        "Solar Capacity (MW)",
+        min_value=0.1,
+        value=5.0,
+        step=0.5,
+        key="v04_capacity"
+    )
+
+    cuf = st.sidebar.slider(
+        "Solar CUF (%)",
+        10.0,
+        35.0,
+        23.0,
+        0.5,
+        key="v04_cuf"
+    ) / 100
+
+    capex_cr_per_mw = st.sidebar.number_input(
+        "CAPEX (₹ crore/MW)",
+        min_value=0.1,
+        value=3.5,
+        step=0.1,
+        key="v04_capex"
+    )
+
+    om_lakh_per_mw_year = st.sidebar.number_input(
+        "O&M (₹ lakh/MW/year)",
+        min_value=0.0,
+        value=5.0,
+        step=0.5,
+        key="v04_om"
+    )
+
+    st.sidebar.header("🏭 Consumer")
+
+    contract_demand_mw = st.sidebar.number_input(
+        "Contract Demand (MW)",
+        min_value=0.1,
+        value=5.0,
+        step=0.5,
+        key="v04_contract_demand"
+    )
+
+    annual_consumption_mwh = st.sidebar.number_input(
+        "Annual Consumption (MWh)",
+        min_value=100.0,
+        value=10_000.0,
+        step=500.0,
+        key="v04_consumption"
+    )
+
+    st.sidebar.header("💰 Grid Tariff")
+
+    grid_tariff = st.sidebar.number_input(
+        "Grid Tariff (₹/kWh)",
+        min_value=0.0,
+        value=8.20,
+        step=0.10,
+        key="v04_grid"
+    )
+
+    # --------------------------------------------------------
+    # BASIC PROJECT ECONOMICS
+    # --------------------------------------------------------
+
+    results = calculate_lcoe(
+        capacity_mw,
+        cuf,
+        capex_cr_per_mw,
+        om_lakh_per_mw_year,
+        25,
+        0.10,
+        0.005
+    )
+
+    annual_generation_mwh = results["annual_generation_mwh"]
+    lcoe = results["lcoe"]
+
+    # --------------------------------------------------------
+    # REGULATORY LOOKUPS
+    # --------------------------------------------------------
+
+    regulatory_context = (
+        "Captive"
+        if consumer_type == "Captive"
+        else "Non-captive"
+    )
+
+    minimum_load_parameter = (
+        "captive_minimum_load"
+        if consumer_type == "Captive"
+        else "geoa_minimum_load"
+    )
+
+    # Minimum load
+    minimum_load = _regulatory_value(
+        minimum_load_parameter,
+        state=state,
+        applicability=(
+            "Captive"
+            if consumer_type == "Captive"
+            else "Non-captive Green Energy Open Access Consumer"
+        )
+    )
+
+    # --------------------------------------------------------
+    # RAJASTHAN BANKING REGIME
+    # --------------------------------------------------------
+
+    banking_regime = None
+    banking_regime_applicability = None
+    banking_ratio = None
+
+    if consumer_type == "Captive":
+
+        banking_ratio = capacity_mw / contract_demand_mw
+
+        if banking_ratio <= 1.0:
+
+            banking_regime = "Up to 100% of Contract Demand"
+            banking_regime_applicability = (
+                "RE captive power plant up to 100% of Contract Demand"
+            )
+
+        elif banking_ratio <= 2.0:
+
+            banking_regime = "More than 100% to 200% of Contract Demand"
+            banking_regime_applicability = (
+                "RE captive power plant from 100% to 200% of Contract Demand"
+            )
+
+        else:
+
+            banking_regime = "Above 200% of Contract Demand"
+            banking_regime_applicability = None
+
+    # --------------------------------------------------------
+    # BANKING PROVISIONS
+    # --------------------------------------------------------
+
+    banking_lookup_applicability = (
+        banking_regime_applicability
+        if consumer_type == "Captive"
+        else regulatory_context
+    )
+
+    # No banking regime is currently captured in the
+    # regulatory database for captive RE capacity above
+    # 200% of Contract Demand.
+    if consumer_type == "Captive" and banking_regime_applicability is None:
+
+        banking_eligibility = None
+        banking_charge_rule = None
+        banking_ceiling_energy = None
+        banking_ceiling_consumption = None
+        settlement_basis = None
+
+    else:
+
+        banking_eligibility = _regulatory_value(
+            "banking_eligibility",
+            state=state,
+            applicability=banking_lookup_applicability,
+            consumer_category=(
+                "Captive"
+                if consumer_type == "Captive"
+                else "Non-captive"
+            ),
+            procurement_type=(
+                "Captive"
+                if consumer_type == "Captive"
+                else "Open Access"
+            )
+        )
+
+        banking_charge_rule = _regulatory_value(
+            "banking_charge",
+            state=state,
+            applicability=banking_lookup_applicability,
+            consumer_category=(
+                "Captive"
+                if consumer_type == "Captive"
+                else "Non-captive"
+            ),
+            procurement_type=(
+                "Captive"
+                if consumer_type == "Captive"
+                else "Open Access"
+            )
+        )
+
+        banking_ceiling_energy = _regulatory_value(
+            "banking_ceiling_energy_injected",
+            state=state,
+            applicability=banking_lookup_applicability,
+            consumer_category=(
+                "Captive"
+                if consumer_type == "Captive"
+                else "Non-captive"
+            ),
+            procurement_type=(
+                "Captive"
+                if consumer_type == "Captive"
+                else "Open Access"
+            )
+        )
+
+        banking_ceiling_consumption = _regulatory_value(
+            "banking_ceiling_monthly_consumption",
+            state=state,
+            applicability=banking_lookup_applicability,
+            consumer_category=(
+                "Captive"
+                if consumer_type == "Captive"
+                else "Non-captive"
+            ),
+            procurement_type=(
+                "Captive"
+                if consumer_type == "Captive"
+                else "Open Access"
+            )
+        )
+
+        settlement_basis = _regulatory_value(
+            "banking_settlement_basis",
+            state=state,
+            applicability=banking_lookup_applicability,
+            consumer_category=(
+                "Captive"
+                if consumer_type == "Captive"
+                else "Non-captive"
+            ),
+            procurement_type=(
+                "Captive"
+                if consumer_type == "Captive"
+                else "Open Access"
+        )
+    )
+
+    css_exemption = None
+    as_exemption = None
+
+    if consumer_type == "Captive":
+
+        css_exemption = _regulatory_value(
+            "css_captive_exemption",
+            state=state,
+            consumer_category="Captive",
+            procurement_type="Captive"
+        )
+
+        as_exemption = _regulatory_value(
+            "additional_surcharge_captive_exemption",
+            state=state,
+            consumer_category="Captive",
+            procurement_type="Captive"
+        )
+
+    # --------------------------------------------------------
+    # TARIFF LOOKUPS
+    # --------------------------------------------------------
+
+    tariff_date = "2026-04-01"
+
+    # Convert UI "132 kV+" to database terminology
+    tariff_voltage_level = (
+        "132 kV and above"
+        if voltage_level == "132 kV+"
+        else voltage_level
+    )
+
+    wheeling_result = _tariff_lookup(
+        "Wheeling Charge",
+        state=state,
+        voltage_level=tariff_voltage_level,
+        effective_date=tariff_date
+    )
+
+    css_result = _tariff_lookup(
+        "CSS Maximum",
+        state=state,
+        effective_date=tariff_date
+    )
+
+    additional_surcharge_result = _tariff_lookup(
+        "Additional Surcharge",
+        state=state,
+        effective_date=tariff_date
+    )
+
+    transmission_loss_result = _tariff_lookup(
+        "Transmission Loss",
+        state=state,
+        effective_date=tariff_date
+    )
+
+    wheeling_loss_result = _tariff_lookup(
+        "Wheeling Loss",
+        state=state,
+        voltage_level=tariff_voltage_level,
+        effective_date=tariff_date
+    )
+
+    acos_result = _tariff_lookup(
+        "Average Cost of Supply",
+        state=state,
+        effective_date=tariff_date
+    )
+
+    standby_result = _tariff_lookup(
+        "Standby Charge",
+        state=state,
+        effective_date=tariff_date
+    )
+
+    wheeling = _tariff_value(wheeling_result)
+    css = _tariff_value(css_result)
+    additional_surcharge = _tariff_value(
+        additional_surcharge_result
+    )
+
+    transmission_loss = _tariff_value(
+        transmission_loss_result
+    )
+
+    wheeling_loss = _tariff_value(
+        wheeling_loss_result
+    )
+
+    acos = _tariff_value(acos_result)
+    standby = _tariff_value(standby_result)
+
+    # --------------------------------------------------------
+    # LOSS-ADJUSTED ENERGY
+    # --------------------------------------------------------
+
+    transmission_loss_pct = (
+        float(transmission_loss)
+        if transmission_loss is not None
+        else None
+    )
+
+    wheeling_loss_pct = (
+        float(wheeling_loss)
+        if wheeling_loss is not None
+        else None
+    )
+
+    if (
+        transmission_loss_pct is not None
+        and wheeling_loss_pct is not None
+    ):
+
+        delivery_efficiency = (
+            (1 - transmission_loss_pct / 100)
+            * (1 - wheeling_loss_pct / 100)
+        )
+
+        loss_adjusted_lcoe = (
+            lcoe / delivery_efficiency
+            if delivery_efficiency > 0
+            else None
+        )
+
+    else:
+
+        delivery_efficiency = None
+        loss_adjusted_lcoe = None
+
+    # --------------------------------------------------------
+    # KPI
+    # --------------------------------------------------------
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    col1.metric(
+        "Solar LCOE",
+        f"₹{lcoe:.2f}/kWh"
+    )
+
+    col2.metric(
+        "Annual Generation",
+        f"{annual_generation_mwh:,.0f} MWh"
+    )
+
+    col3.metric(
+        "Delivery Efficiency",
+        (
+            f"{delivery_efficiency * 100:.2f}%"
+            if delivery_efficiency is not None
+            else "N/A"
+        )
+    )
+
+    col4.metric(
+        "Loss-adjusted LCOE",
+        (
+            f"₹{loss_adjusted_lcoe:.2f}/kWh"
+            if loss_adjusted_lcoe is not None
+            else "N/A"
+        )
+    )
+
+    # --------------------------------------------------------
+    # REGULATORY STATUS
+    # --------------------------------------------------------
+
+    st.subheader("📋 Regulatory Applicability")
+
+    regulatory_table = pd.DataFrame({
+        "Provision": [
+            "Minimum GEOA Load / Captive Load",
+            "Banking Eligibility",
+            "Banking Charge",
+            "Banking Ceiling — Energy Injected",
+            "Banking Ceiling — Monthly Consumption",
+            "Banking Settlement Basis",
+            "CSS Captive Exemption",
+            "Additional Surcharge Captive Exemption",
+        ],
+
+        "Value": [
+            minimum_load,
+            banking_eligibility,
+            banking_charge_rule,
+            banking_ceiling_energy,
+            banking_ceiling_consumption,
+            settlement_basis,
+            css_exemption,
+            as_exemption,
+        ],
+    })
+
+    st.dataframe(
+        regulatory_table,
+        use_container_width=True,
+        hide_index=True
+    )
+
+    # --------------------------------------------------------
+    # TARIFF TABLE
+    # --------------------------------------------------------
+
+    st.subheader(
+        "💰 Rajasthan Tariff Parameters — FY 2026–27"
+    )
+
+    tariff_rows = [
+        ("Wheeling Charge", wheeling, "₹/kWh"),
+        ("CSS Maximum", css, "₹/kWh"),
+        ("Additional Surcharge", additional_surcharge, "₹/kWh"),
+        ("Transmission Loss", transmission_loss, "%"),
+        ("Wheeling Loss", wheeling_loss, "%"),
+        ("Average Cost of Supply", acos, "₹/kWh"),
+        ("Standby Charge", standby, "%"),
+    ]
+
+    tariff_table = pd.DataFrame(
+        tariff_rows,
+        columns=["Parameter", "Value", "Unit"]
+    )
+
+    tariff_table["Displayed Value"] = [
+        _display_value(value, unit)
+        for _, value, unit in tariff_rows
+    ]
+
+    st.dataframe(
+        tariff_table[
+            ["Parameter", "Displayed Value", "Unit"]
+        ],
+        use_container_width=True,
+        hide_index=True
+    )
+
+
+    # --------------------------------------------------------
+    # RAJASTHAN MONTHLY BANKING ANALYSIS
+    # --------------------------------------------------------
+
+    st.divider()
+
+    st.subheader("🔋 Rajasthan Monthly Banking Analysis")
+
+    st.caption(
+        "Monthly energy-flow calculation using the selected Rajasthan "
+        "banking regime and the regulatory parameters retrieved above."
+    )
+
+    # --------------------------------------------------------
+    # MONTHLY PROFILES
+    # --------------------------------------------------------
+
+    months = [
+        "January", "February", "March", "April",
+        "May", "June", "July", "August",
+        "September", "October", "November", "December"
+    ]
+
+    demand_shares_v04 = [
+        0.075,
+        0.073,
+        0.078,
+        0.085,
+        0.095,
+        0.095,
+        0.090,
+        0.085,
+        0.082,
+        0.080,
+        0.078,
+        0.084
+    ]
+
+    solar_shares_v04 = [
+        0.075,
+        0.078,
+        0.090,
+        0.095,
+        0.100,
+        0.095,
+        0.080,
+        0.075,
+        0.070,
+        0.070,
+        0.080,
+        0.092
+    ]
+
+    # --------------------------------------------------------
+    # MONTHLY INPUT ENERGY
+    # --------------------------------------------------------
+
+    monthly_df = pd.DataFrame({
+        "Month": months,
+        "Demand Share": demand_shares_v04,
+        "Solar Share": solar_shares_v04
+    })
+
+    monthly_df["Demand (MWh)"] = (
+        annual_consumption_mwh
+        * monthly_df["Demand Share"]
+    )
+
+    monthly_df["Solar Generation (MWh)"] = (
+        annual_generation_mwh
+        * monthly_df["Solar Share"]
+    )
+
+    # --------------------------------------------------------
+    # DIRECT RENEWABLE CONSUMPTION
+    # --------------------------------------------------------
+
+    monthly_df["Direct Renewable Consumption (MWh)"] = (
+        monthly_df[
+            [
+                "Demand (MWh)",
+                "Solar Generation (MWh)"
+            ]
+        ].min(axis=1)
+    )
+
+    # --------------------------------------------------------
+    # SURPLUS AND SHORTFALL
+    # --------------------------------------------------------
+
+    monthly_df["Solar Surplus (MWh)"] = (
+        monthly_df["Solar Generation (MWh)"]
+        - monthly_df["Direct Renewable Consumption (MWh)"]
+    )
+
+    monthly_df["Grid Shortfall Before Banking (MWh)"] = (
+        monthly_df["Demand (MWh)"]
+        - monthly_df["Direct Renewable Consumption (MWh)"]
+    )
+
+    # --------------------------------------------------------
+    # BANKING CALCULATION
+    # --------------------------------------------------------
+
+    monthly_df["Banking Ceiling (MWh)"] = 0.0
+    monthly_df["Gross Banked Energy (MWh)"] = 0.0
+    monthly_df["Banking Charge Energy (MWh)"] = 0.0
+    monthly_df["Bank Withdrawal (MWh)"] = 0.0
+    monthly_df["Grid Requirement After Banking (MWh)"] = (
+        monthly_df["Grid Shortfall Before Banking (MWh)"]
+    )
+    monthly_df["Ending Bank Balance (MWh)"] = 0.0
+
+    banking_charge_fraction = 0.0
+
+    if (
+        consumer_type == "Captive"
+        and banking_regime_applicability is not None
+        and banking_eligibility == "Yes"
+    ):
+
+        try:
+            banking_charge_fraction = (
+                float(banking_charge_rule) / 100
+            )
+        except Exception:
+            banking_charge_fraction = 0.0
+
+        # ----------------------------------------------------
+        # REGIME 1: UP TO 100% OF CONTRACT DEMAND
+        # ----------------------------------------------------
+
+        if banking_regime == "Up to 100% of Contract Demand":
+
+            energy_ceiling_pct = (
+                float(banking_ceiling_energy)
+                if banking_ceiling_energy is not None
+                else 0.0
+            )
+
+            consumption_ceiling_pct = (
+                float(banking_ceiling_consumption)
+                if banking_ceiling_consumption is not None
+                else 0.0
+            )
+
+            bank_balance = 0.0
+
+            for i in range(len(monthly_df)):
+
+                demand = monthly_df.loc[i, "Demand (MWh)"]
+                surplus = monthly_df.loc[i, "Solar Surplus (MWh)"]
+                shortfall = monthly_df.loc[
+                    i,
+                    "Grid Shortfall Before Banking (MWh)"
+                ]
+
+                # Rajasthan ceiling:
+                # higher of 25% of monthly injected energy
+                # or 30% of monthly consumption.
+                ceiling_energy = (
+                    surplus * energy_ceiling_pct / 100
+                )
+
+                ceiling_consumption = (
+                    demand * consumption_ceiling_pct / 100
+                )
+
+                banking_ceiling = max(
+                    ceiling_energy,
+                    ceiling_consumption
+                )
+
+                gross_banked = min(
+                    surplus,
+                    banking_ceiling
+                )
+
+                bank_balance += gross_banked
+
+                # 8% charge is deducted from banked energy
+                # when energy is withdrawn.
+                usable_balance = (
+                    bank_balance
+                    * (1 - banking_charge_fraction)
+                )
+
+                withdrawal = min(
+                    shortfall,
+                    usable_balance
+                )
+
+                gross_energy_used = (
+                    withdrawal / (1 - banking_charge_fraction)
+                    if (
+                        withdrawal > 0
+                        and banking_charge_fraction < 1
+                    )
+                    else 0.0
+                )
+
+                gross_energy_used = min(
+                    gross_energy_used,
+                    bank_balance
+                )
+
+                banking_charge_energy = (
+                    gross_energy_used
+                    - withdrawal
+                )
+
+                bank_balance -= gross_energy_used
+
+                grid_after_banking = (
+                    shortfall - withdrawal
+                )
+
+                monthly_df.loc[i, "Banking Ceiling (MWh)"] = (
+                    banking_ceiling
+                )
+
+                monthly_df.loc[
+                    i,
+                    "Gross Banked Energy (MWh)"
+                ] = gross_banked
+
+                monthly_df.loc[
+                    i,
+                    "Banking Charge Energy (MWh)"
+                ] = banking_charge_energy
+
+                monthly_df.loc[
+                    i,
+                    "Bank Withdrawal (MWh)"
+                ] = withdrawal
+
+                monthly_df.loc[
+                    i,
+                    "Grid Requirement After Banking (MWh)"
+                ] = grid_after_banking
+
+                monthly_df.loc[
+                    i,
+                    "Ending Bank Balance (MWh)"
+                ] = bank_balance
+
+            # Annual settlement:
+            # remaining banked energy lapses at year-end.
+            annual_lapsed_energy = bank_balance
+
+        # ----------------------------------------------------
+        # REGIME 2: >100% TO 200%
+        # ----------------------------------------------------
+
+        elif (
+            banking_regime
+            == "More than 100% to 200% of Contract Demand"
+        ):
+
+            consumption_ceiling_pct = (
+                float(banking_ceiling_consumption)
+                if banking_ceiling_consumption is not None
+                else 0.0
+            )
+
+            # Billing-cycle settlement:
+            # each month is treated as an independent billing cycle.
+            for i in range(len(monthly_df)):
+
+                demand = monthly_df.loc[i, "Demand (MWh)"]
+                surplus = monthly_df.loc[i, "Solar Surplus (MWh)"]
+                shortfall = monthly_df.loc[
+                    i,
+                    "Grid Shortfall Before Banking (MWh)"
+                ]
+
+                banking_ceiling = (
+                    demand
+                    * consumption_ceiling_pct
+                    / 100
+                )
+
+                gross_banked = min(
+                    surplus,
+                    banking_ceiling
+                )
+
+                usable_banked = (
+                    gross_banked
+                    * (1 - banking_charge_fraction)
+                )
+
+                withdrawal = min(
+                    shortfall,
+                    usable_banked
+                )
+
+                banking_charge_energy = (
+                    withdrawal
+                    * banking_charge_fraction
+                    / (1 - banking_charge_fraction)
+                    if (
+                        withdrawal > 0
+                        and banking_charge_fraction < 1
+                    )
+                    else 0.0
+                )
+
+                grid_after_banking = (
+                    shortfall - withdrawal
+                )
+
+                ending_balance = max(
+                    gross_banked
+                    - withdrawal
+                    - banking_charge_energy,
+                    0.0
+                )
+
+                # Billing-cycle balance lapses at the end
+                # of each cycle.
+                monthly_df.loc[
+                    i,
+                    "Banking Ceiling (MWh)"
+                ] = banking_ceiling
+
+                monthly_df.loc[
+                    i,
+                    "Gross Banked Energy (MWh)"
+                ] = gross_banked
+
+                monthly_df.loc[
+                    i,
+                    "Banking Charge Energy (MWh)"
+                ] = banking_charge_energy
+
+                monthly_df.loc[
+                    i,
+                    "Bank Withdrawal (MWh)"
+                ] = withdrawal
+
+                monthly_df.loc[
+                    i,
+                    "Grid Requirement After Banking (MWh)"
+                ] = grid_after_banking
+
+                monthly_df.loc[
+                    i,
+                    "Ending Bank Balance (MWh)"
+                ] = ending_balance
+
+            annual_lapsed_energy = (
+                monthly_df["Ending Bank Balance (MWh)"].sum()
+            )
+
+        else:
+
+            annual_lapsed_energy = 0.0
+
+    else:
+
+        annual_lapsed_energy = 0.0
+
+    # --------------------------------------------------------
+    # DISPLAY BANKING STATUS
+    # --------------------------------------------------------
+
+    if consumer_type != "Captive":
+
+        st.info(
+            "Rajasthan banking provisions currently captured in the "
+            "regulatory database apply to captive consumption. "
+            "No banking calculation is applied to the selected "
+            "Non-Captive case."
+        )
+
+    elif banking_regime == "Above 200% of Contract Demand":
+
+        st.warning(
+            "The selected renewable capacity is above 200% of "
+            "Contract Demand. No applicable Rajasthan banking regime "
+            "is currently captured in the regulatory database. "
+            "Banking is therefore not calculated."
+        )
+
+    elif banking_regime is not None:
+
+        st.success(
+            f"Banking regime applied: **{banking_regime}** | "
+            f"Settlement: **{settlement_basis}** | "
+            f"Banking charge: **{banking_charge_rule}%**"
+        )
+
+    else:
+
+        st.warning(
+            "No applicable banking regime is available for the "
+            "selected configuration."
+        )
+
+    # --------------------------------------------------------
+    # MONTHLY BANKING TABLE
+    # --------------------------------------------------------
+
+    display_columns = [
+        "Month",
+        "Demand (MWh)",
+        "Solar Generation (MWh)",
+        "Direct Renewable Consumption (MWh)",
+        "Solar Surplus (MWh)",
+        "Grid Shortfall Before Banking (MWh)",
+        "Banking Ceiling (MWh)",
+        "Gross Banked Energy (MWh)",
+        "Banking Charge Energy (MWh)",
+        "Bank Withdrawal (MWh)",
+        "Grid Requirement After Banking (MWh)",
+        "Ending Bank Balance (MWh)"
+    ]
+
+    st.dataframe(
+        monthly_df[display_columns].round(2),
+        use_container_width=True,
+        hide_index=True
+    )
+
+    # --------------------------------------------------------
+    # MONTHLY BANKING KPIs
+    # --------------------------------------------------------
+
+    total_demand_v04 = monthly_df["Demand (MWh)"].sum()
+    total_solar_v04 = monthly_df["Solar Generation (MWh)"].sum()
+    total_direct_v04 = monthly_df[
+        "Direct Renewable Consumption (MWh)"
+    ].sum()
+    total_surplus_v04 = monthly_df[
+        "Solar Surplus (MWh)"
+    ].sum()
+    total_withdrawal_v04 = monthly_df[
+        "Bank Withdrawal (MWh)"
+    ].sum()
+    total_grid_after_banking_v04 = monthly_df[
+        "Grid Requirement After Banking (MWh)"
+    ].sum()
+    total_banking_charge_v04 = monthly_df[
+        "Banking Charge Energy (MWh)"
+    ].sum()
+
+    k1, k2, k3, k4 = st.columns(4)
+
+    k1.metric(
+        "Annual Demand",
+        f"{total_demand_v04:,.0f} MWh"
+    )
+
+    k2.metric(
+        "Solar Generation",
+        f"{total_solar_v04:,.0f} MWh"
+    )
+
+    k3.metric(
+        "Bank Withdrawal",
+        f"{total_withdrawal_v04:,.0f} MWh"
+    )
+
+    k4.metric(
+        "Banking Charge",
+        f"{total_banking_charge_v04:,.0f} MWh"
+    )
+
+    # --------------------------------------------------------
+    # BANKING SETTLEMENT SUMMARY
+    # --------------------------------------------------------
+
+    st.subheader("📊 Banking Settlement Summary")
+
+    settlement_summary = pd.DataFrame({
+        "Metric": [
+            "Total Solar Generation",
+            "Direct Renewable Consumption",
+            "Solar Surplus",
+            "Bank Withdrawal",
+            "Grid Requirement After Banking",
+            "Banking Charge Energy",
+            "Lapsed / Unused Banked Energy"
+        ],
+        "MWh": [
+            total_solar_v04,
+            total_direct_v04,
+            total_surplus_v04,
+            total_withdrawal_v04,
+            total_grid_after_banking_v04,
+            total_banking_charge_v04,
+            annual_lapsed_energy
+        ]
+    })
+
+    st.dataframe(
+        settlement_summary.round(2),
+        use_container_width=True,
+        hide_index=True
+    )
+
+    # --------------------------------------------------------
+    # COST BUILD-UP
+    # --------------------------------------------------------
+
+    st.subheader(
+        "🔌 Renewable Open Access Cost Build-up"
+    )
+
+    # --------------------------------------------------------
+    # Determine applicable charges
+    # --------------------------------------------------------
+
+    if consumer_type == "Captive":
+
+        # Captive consumers are exempt from CSS and
+        # Additional Surcharge under the validated
+        # regulatory database provisions.
+        applicable_wheeling = wheeling
+        applicable_css = 0.0
+        applicable_additional_surcharge = 0.0
+
+        css_status = "Exempt — Captive"
+        as_status = "Exempt — Captive"
+
+    else:
+
+        # Non-captive Open Access
+        applicable_wheeling = wheeling
+        applicable_css = css
+        applicable_additional_surcharge = additional_surcharge
+
+        css_status = "Applicable"
+        as_status = "Applicable"
+
+
+    # --------------------------------------------------------
+    # Cost components
+    # --------------------------------------------------------
+
+    cost_rows = [
+        ("Solar LCOE", lcoe),
+        ("Wheeling Charge", applicable_wheeling),
+        ("CSS", applicable_css),
+        ("Additional Surcharge", applicable_additional_surcharge),
+    ]
+
+    cost_df = pd.DataFrame(
+        cost_rows,
+        columns=["Component", "₹/kWh"]
+    )
+
+
+    # --------------------------------------------------------
+    # Add explanatory status
+    # --------------------------------------------------------
+
+    cost_status_df = pd.DataFrame({
+        "Component": [
+            "CSS",
+            "Additional Surcharge",
+        ],
+        "Regulatory Treatment": [
+            css_status,
+            as_status,
+        ],
+    })
+
+    st.dataframe(
+        cost_df.round(3),
+        use_container_width=True,
+        hide_index=True
+    )
+
+    st.caption(
+        "Regulatory treatment of captive exemptions:"
+    )
+
+    st.dataframe(
+        cost_status_df,
+        use_container_width=True,
+        hide_index=True
+    )
+
+
+    # --------------------------------------------------------
+    # Calculate indicative delivered cost
+    # --------------------------------------------------------
+
+    if (
+        applicable_wheeling is not None
+        and loss_adjusted_lcoe is not None
+    ):
+
+        regulatory_charges = (
+            applicable_wheeling
+            + applicable_css
+            + applicable_additional_surcharge
+        )
+
+        indicative_cost = (
+            loss_adjusted_lcoe
+            + regulatory_charges
+        )
+
+        st.metric(
+            "Indicative Delivered Cost — excluding transmission",
+            f"₹{indicative_cost:.3f}/kWh"
+        )
+
+        st.info(
+            "This is an indicative delivered cost excluding "
+            "transmission charges. For captive procurement, CSS "
+            "and Additional Surcharge are excluded based on the "
+            "validated captive exemption provisions."
+            if consumer_type == "Captive"
+            else
+            "This is an indicative delivered cost excluding "
+            "transmission charges."
+        )
+
+        st.warning(
+            "Transmission charge is not numerically linked in "
+            "the current tariff database. Therefore, this is "
+            "not a final all-in OA cost."
+        )
+
+    else:
+
+        st.warning(
+            "A complete delivered-cost calculation cannot be "
+            "produced because one or more required values "
+            "are not available."
+        )
+    # --------------------------------------------------------
+    # SOURCE TRACEABILITY
+    # --------------------------------------------------------
+
+    st.subheader("🔎 Source & Traceability")
+
+    source_results = [
+        ("Wheeling Charge", wheeling_result),
+        ("CSS Maximum", css_result),
+        ("Additional Surcharge", additional_surcharge_result),
+        ("Transmission Loss", transmission_loss_result),
+        ("Wheeling Loss", wheeling_loss_result),
+        ("Average Cost of Supply", acos_result),
+        ("Standby Charge", standby_result),
+    ]
+
+    source_rows = []
+
+    for label, result in source_results:
+
+        source_rows.append({
+            "Parameter": label,
+            "Source": _tariff_source_text(result)
+        })
+
+    st.dataframe(
+        pd.DataFrame(source_rows),
+        use_container_width=True,
+        hide_index=True
+    )
+
+    # --------------------------------------------------------
+    # MODEL NOTES
+    # --------------------------------------------------------
+
+    st.subheader("⚠️ Model Notes")
+
+    st.markdown(
+        """
+        - Version 0.4 separates **regulatory rules** from **tariff values**.
+        - Regulatory provisions are retrieved from the Rajasthan regulatory database.
+        - Tariff values are retrieved from the Rajasthan tariff database.
+        - Missing numerical values are **not treated as zero**.
+        - Voltage-specific wheeling charges and losses are linked to the selected voltage level.
+        - Transmission charge is identified as tariff-dependent but is not numerically linked in the present database.
+        - Banking settlement and monthly banking mechanics will be integrated into the Version 0.4 monthly model after this regulatory layer is validated.
+        """
+    )
+
+    st.download_button(
+        "⬇️ Download Rajasthan Tariff Summary",
+        tariff_table.to_csv(index=False),
+        "version_04_rajasthan_tariff_summary.csv",
+        "text/csv",
+    )
 
 # ============================================================
 # NAVIGATION
@@ -1631,7 +3000,8 @@ page = st.sidebar.radio(
     [
         "Version 0.1 — LCOE + OA",
         "Version 0.2 — PPA Economics",
-        "Version 0.3 — Monthly Analysis"
+        "Version 0.3 — Monthly Analysis",
+        "Version 0.4 — Rajasthan Regulatory"
     ]
 )
 
@@ -1642,7 +3012,7 @@ st.sidebar.caption(
 )
 
 st.sidebar.caption(
-    "Prototype: Versions 0.1–0.3"
+    "Prototype: Versions 0.1–0.4"
 )
 
 
@@ -1662,6 +3032,10 @@ elif page == "Version 0.3 — Monthly Analysis":
 
     version_03()
 
+elif page == "Version 0.4 — Rajasthan Regulatory":
+
+    version_04()
+
 
 # ============================================================
 # FOOTER
@@ -1670,5 +3044,5 @@ elif page == "Version 0.3 — Monthly Analysis":
 st.divider()
 
 st.caption(
-    "Prototype analytical tool | Versions 0.1, 0.2 and 0.3"
+    "Prototype analytical tool | Versions 0.1, 0.2, 0.3 and 0.4"
 )

@@ -16,11 +16,27 @@ The tool currently integrates three analytical modules:
 - Version 0.1 – Solar LCOE and Open Access comparison
 - Version 0.2 – PPA and 25-year project economics
 - Version 0.3 – Monthly energy matching and banking
-
+- Version 0.4 – Regulatory & Open Access Analysis
 The objective is to progressively develop the tool into a practical decision-support platform for renewable energy procurement and power planning in India.
-
----
-
+India-re-power-procurement-tool/
+│
+├── app.py
+├── requirements.txt
+├── README.md
+├── CHANGELOG.md
+│
+├── src/
+│   └── regulatory_engine.py
+│
+├── data/
+│   └── processed/
+│       └── regulatory/
+│           ├── rajasthan_regulatory_parameters.csv
+│           └── rajasthan_tariff_parameters.csv
+│
+├── assets/
+└── docs/
+  
 ## How the Tool Works
 
 The three versions are integrated into a single analytical workflow.

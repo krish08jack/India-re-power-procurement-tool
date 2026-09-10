@@ -18,24 +18,7 @@ The tool currently integrates three analytical modules:
 - Version 0.3 – Monthly energy matching and banking
 - Version 0.4 – Regulatory & Open Access Analysis
 The objective is to progressively develop the tool into a practical decision-support platform for renewable energy procurement and power planning in India.
-India-re-power-procurement-tool/
-│
-├── app.py
-├── requirements.txt
-├── README.md
-├── CHANGELOG.md
-│
-├── src/
-│   └── regulatory_engine.py
-│
-├── data/
-│   └── processed/
-│       └── regulatory/
-│           ├── rajasthan_regulatory_parameters.csv
-│           └── rajasthan_tariff_parameters.csv
-│
-├── assets/
-└── docs/
+
   
 ## How the Tool Works
 
@@ -115,7 +98,7 @@ Estimated savings
 Renewable energy share
 The purpose of Version 0.1 is to establish the basic cost competitiveness of renewable electricity compared with conventional grid procurement.
 
-## Version 0.2 – PPA + 25-Year Project Economics
+Version 0.2 – PPA + 25-Year Project Economics
 Version 0.2 extends the analysis from a simple cost comparison to a long-term project economics model.
 The module evaluates the financial performance of a renewable energy project over a 25-year project life.
 Key Components
